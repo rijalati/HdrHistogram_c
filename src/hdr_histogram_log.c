@@ -307,9 +307,6 @@ int hdr_encode_compressed(
 // ##     ## ##       ##    ## ##     ## ##     ##  ##  ##   ### ##    ##
 // ########  ########  ######   #######  ########  #### ##    ##  ######
 
-// Prototype to avoid exposing in header
-void hdr_reset_internal_counters(struct hdr_histogram* h);
-
 static void _apply_to_counts_16(struct hdr_histogram* h, const int16_t* counts_data, const int32_t counts_limit)
 {
     int i;
@@ -733,7 +730,7 @@ int hdr_decode_compressed(
 
 int hdr_log_writer_init(struct hdr_log_writer* writer)
 {
-	(void)writer;
+    (void)writer;
     return 0;
 }
 
@@ -766,7 +763,7 @@ static int print_time(FILE* f, hdr_timespec* timestamp)
     }
 
 #if defined(__WINDOWS__)
-	_gmtime32_s(&date_time, &timestamp->tv_sec);
+    _gmtime32_s(&date_time, &timestamp->tv_sec);
 #else
     gmtime_r(&timestamp->tv_sec, &date_time);
 #endif
@@ -792,7 +789,7 @@ int hdr_log_write_header(
     struct hdr_log_writer* writer, FILE* file,
     const char* user_prefix, hdr_timespec* timestamp)
 {
-	(void)writer;
+    (void)writer;
 
     if (print_user_prefix(file, user_prefix) < 0)
     {
@@ -828,7 +825,7 @@ int hdr_log_write(
     int result = 0;
     size_t encoded_len;
 
-	(void)writer;
+    (void)writer;
 
     rc = hdr_encode_compressed(histogram, &compressed_histogram, &compressed_len);
     if (rc != 0)
@@ -909,7 +906,8 @@ static void scan_header_line(struct hdr_log_reader* reader, const char* line)
 static bool validate_log_version(struct hdr_log_reader* reader)
 {
     return reader->major_version == LOG_MAJOR_VERSION &&
-        (reader->minor_version == 0 || reader->minor_version == 1 || reader->minor_version == 2);
+        (reader->minor_version == 0 || reader->minor_version == 1 ||
+            reader->minor_version == 2 || reader->minor_version == 3);
 }
 
 #define HEADER_LINE_LENGTH 128
@@ -975,71 +973,71 @@ static void update_timespec(hdr_timespec* ts, int time_s, int time_ms)
 
 static ssize_t hdr_read_chunk(char* buffer, size_t length, char terminator, FILE* stream)
 {
-	if (buffer == NULL || length == 0)
-	{
-		return -1;
-	}
+    if (buffer == NULL || length == 0)
+    {
+        return -1;
+    }
 
-	for (size_t i = 0; i < length; ++i)
-	{
-		int c = fgetc(stream);
-		buffer[i] = (char)c;
-		if (c == (int) '\0' || c == (int) terminator || c == EOF)
-		{
-			buffer[i] = '\0';
-			return i;
-		}
-	}
+    for (size_t i = 0; i < length; ++i)
+    {
+        int c = fgetc(stream);
+        buffer[i] = (char)c;
+        if (c == (int) '\0' || c == (int) terminator || c == EOF)
+        {
+            buffer[i] = '\0';
+            return i;
+        }
+    }
 
-	return length;
+    return length;
 }
 
 /* Note that this version of getline assumes lineptr is valid. */
 static ssize_t hdr_getline(char** lineptr, FILE* stream)
 {
-	if (stream == NULL)
-	{
-		return -1;
-	}
+    if (stream == NULL)
+    {
+        return -1;
+    }
 
-	size_t allocation = 128;
-	size_t used = 0;
+    size_t allocation = 128;
+    size_t used = 0;
 
-	char* scratch = NULL;
-	for (;;)
-	{
-		allocation += allocation;
+    char* scratch = NULL;
+    for (;;)
+    {
+        allocation += allocation;
 
-		char* before = scratch;
-		scratch = realloc(scratch, allocation);
-		if (scratch == NULL)
-		{
-			if (before)
-			{
-				free(before);
-			}
-			return -1;
-		}
+        char* before = scratch;
+        scratch = realloc(scratch, allocation);
+        if (scratch == NULL)
+        {
+            if (before)
+            {
+                free(before);
+            }
+            return -1;
+        }
 
-		size_t wanted = allocation - used - 1;
-		size_t read_length = hdr_read_chunk(scratch + used, wanted, '\n', stream);
-		used += read_length;
+        size_t wanted = allocation - used - 1;
+        size_t read_length = hdr_read_chunk(scratch + used, wanted, '\n', stream);
+        used += read_length;
 
 
-		if (read_length < wanted || scratch[used - 1] == '\n' || scratch[used - 1] == '\0')
-		{
-			scratch[used] = '\0';
-			*lineptr = scratch;
-			return used;
-		}
-	}
+        if (read_length < wanted || scratch[used - 1] == '\n' || scratch[used - 1] == '\0')
+        {
+            scratch[used] = '\0';
+            *lineptr = scratch;
+            return used;
+        }
+    }
 }
 
 #else
 static ssize_t hdr_getline(char** lineptr, FILE* stream)
 {
-	size_t line_length = 0;
-	return getline(lineptr, &line_length, stream);
+    size_t line_length = 0;
+    return getline(lineptr, &line_length, stream);
 }
 #endif
 
@@ -1047,7 +1045,8 @@ int hdr_log_read(
     struct hdr_log_reader* reader, FILE* file, struct hdr_histogram** histogram,
     hdr_timespec* timestamp, hdr_timespec* interval)
 {
-    const char* format = "%d.%d,%d.%d,%d.%d,%s";
+    const char* format_v12 = "%d.%d,%d.%d,%d.%d,%s";
+    const char* format_v13 = "Tag=%*[^,],%d.%d,%d.%d,%d.%d,%s";
     char* base64_histogram = NULL;
     uint8_t* compressed_histogram = NULL;
     char* line = NULL;
@@ -1060,7 +1059,7 @@ int hdr_log_read(
     int interval_max_s = 0;
     int interval_max_ms = 0;
 
-	(void)reader;
+    (void)reader;
 
     ssize_t read = hdr_getline(&line, file);
     if (-1 == read)
@@ -1095,13 +1094,21 @@ int hdr_log_read(
     }
 
     int num_tokens = sscanf(
-        line, format, &begin_s, &begin_ms, &end_s, &end_ms,
+        line, format_v13, &begin_s, &begin_ms, &end_s, &end_ms,
         &interval_max_s, &interval_max_ms, base64_histogram);
 
     if (num_tokens != 7)
     {
-        FAIL_AND_CLEANUP(cleanup, result, EINVAL);
+        num_tokens = sscanf(
+            line, format_v12, &begin_s, &begin_ms, &end_s, &end_ms,
+            &interval_max_s, &interval_max_ms, base64_histogram);
+
+        if (num_tokens != 7)
+        {
+            FAIL_AND_CLEANUP(cleanup, result, EINVAL);
+        }
     }
+
 
     size_t base64_len = strlen(base64_histogram);
     size_t compressed_len = hdr_base64_decoded_len(base64_len);
@@ -1124,6 +1131,7 @@ int hdr_log_read(
     update_timespec(interval, end_s, end_ms);
 
 cleanup:
+//    free(tag);
     free(line);
     free(base64_histogram);
     free(compressed_histogram);
